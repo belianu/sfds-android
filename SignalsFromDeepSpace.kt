@@ -1,32 +1,35 @@
-import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
-import java.util.*
-
 //Signals From Deep Space
-class SFDSComSys<A, B, C>(
-    val deepSpaceCarrier: CoroutineScope, lines: List<TransmissionLine<A, B, C>> = emptyList()
+class SFDS<A, B, C, D>(
+    val deepSpaceCarrier: CoroutineScope, channels: List<TransmissionChannel<A, B, C, D>> = emptyList()
 ) {
 
-    private val addressBook: HashMap<String, TransmissionLine<A, B, C>> = hashMapOf()
+    private val addressBook: HashMap<String, TransmissionChannel<A, B, C, D>> = hashMapOf()
 
-    data class TransmissionLine<A, B, C>(
-        val id: String, val line: MutableSharedFlow<List<Signal<A, B, C>>> = MutableSharedFlow()
+    data class TransmissionChannel<A, B, C, D>(
+        val id: String, val line: MutableSharedFlow<List<Signal<A, B, C, D>>> = MutableSharedFlow()
     )
 
-    data class Signal<A, B, C>(
-        val target: A? = null, val action: B? = null, val message: C? = null
-    )
+    data class Signal<A, B, C, D>(
+        val sender: A? = null, val target: B? = null, val action: C? = null, val message: D? = null
+    ) {
+
+        data class Validated<A, B, C, D>(val sender: A, val target: B, val action: C, val message: D)
+
+        fun validateAll(): Validated<A, B, C, D>? {
+            return if (sender != null && target != null && action != null && message != null) {
+                Validated(sender, target, action, message)
+            } else null
+        }
+
+    }
 
     init {
         //check if is present a custom line list
-        if (lines.isEmpty()) {
-            val randomLineId: String = UUID.randomUUID().toString()
-            addressBook[randomLineId] = TransmissionLine(id = randomLineId)
+        if (channels.isEmpty()) {
+            val randomChannelId: String = UUID.randomUUID().toString()
+            addressBook[randomChannelId] = TransmissionChannel(id = randomChannelId)
         } else {
-            lines.forEach {
+            channels.forEach {
                 addressBook[it.id] = it
             }
         }
@@ -35,19 +38,19 @@ class SFDSComSys<A, B, C>(
 
     inner class Generator {
 
-        fun sendOne(lineId: String = "", signal: Signal<A, B, C>) {
+        fun sendOne(channelId: String = "", signal: Signal<A, B, C, D>) {
             deepSpaceCarrier.launch {
-                lineFinder(lineId)?.line?.emit(listOf(signal))
+                channelFinder(channelId)?.line?.emit(listOf(signal))
             }
         }
 
-        fun sendSome(lineId: String = "", signals: List<Signal<A, B, C>>) {
+        fun sendSome(channelId: String = "", signals: List<Signal<A, B, C, D>>) {
             if (signals.isNotEmpty()) {
                 deepSpaceCarrier.launch {
-                    lineFinder(lineId)?.line?.emit(signals)
+                    channelFinder(channelId)?.line?.emit(signals)
                 }
-            }else{
-                Log.w("SFDS","List of signals to send is empty")
+            } else {
+                Log.w("SFDS", "List of signals to send is empty")
             }
         }
     }
@@ -55,26 +58,26 @@ class SFDSComSys<A, B, C>(
 
     inner class Receiver {
 
-        fun receiveOne(lineId: String = "", signalIndex: Int = 0, analyzeSignal: (Signal<A, B, C>) -> Unit) {
+        fun receiveOne(channelId: String = "", signalIndex: Int = 0, analyzeSignal: (Signal<A, B, C, D>) -> Unit) {
             //get the transmission Line
-            val transmissionLine: TransmissionLine<A, B, C>? = lineFinder(lineId)
+            val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
-            transmissionLine?.let { activeLine ->
+            transmissionChannel?.let { activeLine ->
                 deepSpaceCarrier.launch {
-                    activeLine.line.collectLatest { signals ->
+                    activeLine.line.collect { signals ->
                         signalAnalyzer(signals, signalIndex, analyzeSignal)
                     }
                 }
             }
         }
 
-        fun receiveAll(lineId: String = "", analyzeSignals: (List<Signal<A, B, C>>) -> Unit) {
+        fun receiveAll(channelId: String = "", analyzeSignals: (List<Signal<A, B, C, D>>) -> Unit) {
             //get the transmission Line
-            val transmissionLine: TransmissionLine<A, B, C>? = lineFinder(lineId)
+            val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
-            transmissionLine?.let { activeLine ->
+            transmissionChannel?.let { activeLine ->
                 deepSpaceCarrier.launch {
                     activeLine.line.collect { signals ->
                         analyzeSignals(signals)
@@ -83,13 +86,17 @@ class SFDSComSys<A, B, C>(
             }
         }
 
-        fun receiveLatestOne(lineId: String = "", signalIndex: Int = 0, analyzeSignal: (Signal<A, B, C>) -> Unit) {
+        fun receiveLatestOne(
+            channelId: String = "",
+            signalIndex: Int = 0,
+            analyzeSignal: (Signal<A, B, C, D>) -> Unit
+        ) {
 
             //get the transmission Line
-            val transmissionLine: TransmissionLine<A, B, C>? = lineFinder(lineId)
+            val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
-            transmissionLine?.let { activeLine ->
+            transmissionChannel?.let { activeLine ->
                 deepSpaceCarrier.launch {
                     activeLine.line.collectLatest { signals ->
                         signalAnalyzer(signals, signalIndex, analyzeSignal)
@@ -98,13 +105,13 @@ class SFDSComSys<A, B, C>(
             }
         }
 
-        fun receiveLatestAll(lineId: String = "", analyzeSignals: (List<Signal<A, B, C>>) -> Unit) {
+        fun receiveLatestAll(channelId: String = "", analyzeSignals: (List<Signal<A, B, C, D>>) -> Unit) {
 
             //get the transmission Line
-            val transmissionLine: TransmissionLine<A, B, C>? = lineFinder(lineId)
+            val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
-            transmissionLine?.let { activeLine ->
+            transmissionChannel?.let { activeLine ->
                 deepSpaceCarrier.launch {
                     activeLine.line.collectLatest { signals ->
                         analyzeSignals(signals)
@@ -114,9 +121,9 @@ class SFDSComSys<A, B, C>(
         }
 
         private fun signalAnalyzer(
-            signals: List<Signal<A, B, C>>,
+            signals: List<Signal<A, B, C, D>>,
             signalIndex: Int,
-            analysis: (Signal<A, B, C>) -> Unit
+            analysis: (Signal<A, B, C, D>) -> Unit
         ) {
             //check the index presence in the list of signals
             if (signalIndex in 0 until signals.count()) {
@@ -131,18 +138,18 @@ class SFDSComSys<A, B, C>(
         }
     }
 
-    private fun lineFinder(lineId: String): TransmissionLine<A, B, C>? {
+    private fun channelFinder(channelId: String): TransmissionChannel<A, B, C, D>? {
         //get the line
-        val line: TransmissionLine<A, B, C>? = if (lineId.isNotBlank()) {
-            addressBook[lineId]
+        val channel: TransmissionChannel<A, B, C, D>? = if (channelId.isNotBlank()) {
+            addressBook[channelId]
         } else {
             addressBook.entries.firstOrNull()?.value
         }
 
-        if (line == null) {
-            Log.e("SFDS", "Line $lineId not present in the list of transmission lines.")
+        if (channel == null) {
+            Log.e("SFDS", "Channel $channelId not present in the list of transmission lines.")
         }
 
-        return line
+        return channel
     }
 }
