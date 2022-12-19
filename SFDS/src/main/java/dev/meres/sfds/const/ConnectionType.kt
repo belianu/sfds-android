@@ -1,4 +1,4 @@
-package dev.meres.sfds.conts
+package dev.meres.sfds.const
 
 enum class ConnectionType {
     BROADCAST, MULTICAST, UNICAST
