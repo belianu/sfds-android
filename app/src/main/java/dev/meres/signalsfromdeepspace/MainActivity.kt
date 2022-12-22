@@ -15,8 +15,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import dev.meres.sfds.SFDS
-import dev.meres.signalsfromdeepspace.examples.starfleet.Spaceship
+import dev.meres.sfds.Spaceship
 import dev.meres.signalsfromdeepspace.ui.theme.SignalsFromDeepSpaceTheme
+import java.sql.Time
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.*

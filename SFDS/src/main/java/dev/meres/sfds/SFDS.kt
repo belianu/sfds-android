@@ -1,141 +1,46 @@
 package dev.meres.sfds
 
 import android.util.Log
-import dev.meres.sfds.const.ConnectionType
-import dev.meres.sfds.const.TransmissionBehavior
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.*
 
 //Signals From Deep Space
 class SFDS<A, B, C, D>(
-    val deepSpaceCarrier: CoroutineScope,
-    var connectionType: ConnectionType = ConnectionType.BROADCAST,
-    var transmissionBehavior: TransmissionBehavior = TransmissionBehavior.SHARED,
-    var communicators: MutableList<Communicator> = mutableListOf(),
+    val deepSpaceCarrier: CoroutineScope, channels: List<TransmissionChannel<A, B, C, D>> = emptyList()
 ) {
 
-    //region variables
-    private val addressBook: HashMap<String, Channel<A, B, C, D>> = hashMapOf()
-    var sharedTransmission: Boolean = false
-    //endregion variables
+    private val addressBook: HashMap<String, TransmissionChannel<A, B, C, D>> = hashMapOf()
 
+    data class TransmissionChannel<A, B, C, D>(
+        val id: String, val line: MutableSharedFlow<List<Signal<A, B, C, D>>> = MutableSharedFlow()
+    )
+
+    data class Signal<A, B, C, D>(
+        val sender: A? = null, val target: B? = null, val action: C? = null, val message: D? = null
+    ) {
+
+        data class Validated<A, B, C, D>(val sender: A, val target: B, val action: C, val message: D)
+
+        fun validateAll(): Validated<A, B, C, D>? {
+            return if (sender != null && target != null && action != null && message != null) {
+                Validated(sender, target, action, message)
+            } else null
+        }
+
+    }
 
     init {
-
-        when (connectionType) {
-
-            ConnectionType.BROADCAST -> {
-                //link all the users
-
-                when (transmissionBehavior) {
-
-                    TransmissionBehavior.SHARED -> {
-                        sharedTransmission = true
-
-                        //create one channel and register all the user in the channel
-                        UUID.randomUUID().toString().also { channelId ->
-                            addressBook[channelId] = Channel(
-                                id = channelId,
-                                owner = null,
-                                registeredUsers = communicators.map { communicator ->
-                                    Communicator.User(
-                                        id = communicator.id
-                                    )
-                                }.toMutableList()
-                            )
-                        }
-
-                    }
-
-                    TransmissionBehavior.FULL_DUPLEX -> {
-                        sharedTransmission = false
-
-                        //create one channel 1 to all for each communicator
-                        communicators.forEach { communicator ->
-                            //create list of users for this channel
-                            val users = communicators.filter { item -> item.id != communicator.id }
-                            //create the channel
-                            UUID.randomUUID().toString().also { channelId ->
-                                addressBook[channelId] = Channel(
-                                    id = channelId,
-                                    owner = Communicator.Owner(id = communicator.id),
-                                    registeredUsers = users.map { communicator -> Communicator.User(id = communicator.id) }
-                                        .toMutableList()
-                                )
-                            }
-                        }
-
-                    }
-
-                    TransmissionBehavior.CLIENT_SERVER -> {
-                        sharedTransmission = false
-
-                        //create one channel for the owner 1 to all
-                        val owner = communicators.filterIsInstance(Communicator.Owner::class.java).also {
-                            Log.w(
-                                "SFDS",
-                                "Communicators list for Client-Server Broadcast transmission contains multiple owners. Only one owner is admitted for this type of transmission.\nOWNERS : ${it.joinToString()}"
-                            )
-                        }.first()
-
-                        val users = communicators.filter { item -> item.id != owner.id }
-
-                        //create the channel
-                        UUID.randomUUID().toString().also { channelId ->
-                            addressBook[channelId] = Channel(
-                                id = channelId,
-                                owner = owner,
-                                registeredUsers = users.map { communicator -> Communicator.User(id = communicator.id) }
-                                    .toMutableList()
-                            )
-                        }
-                    }
-                }
-            }
-
-            ConnectionType.MULTICAST -> {
-
-                when (transmissionBehavior) {
-
-                    TransmissionBehavior.SHARED -> {
-                        //no owners
-                        sharedTransmission = true
-
-
-                    }
-
-                    TransmissionBehavior.FULL_DUPLEX -> {
-
-                    }
-
-                    TransmissionBehavior.CLIENT_SERVER -> {
-
-                    }
-
-                }
-            }
-
-            ConnectionType.UNICAST -> {
-
-                when (transmissionBehavior) {
-
-                    TransmissionBehavior.SHARED -> {
-                        //no owners
-                        sharedTransmission = true
-                    }
-
-                    TransmissionBehavior.FULL_DUPLEX -> {
-
-                    }
-
-                    TransmissionBehavior.CLIENT_SERVER -> {
-
-                    }
-
-                }
+        //check if is present a custom line list
+        if (channels.isEmpty()) {
+            val randomChannelId: String = UUID.randomUUID().toString()
+            addressBook[randomChannelId] = TransmissionChannel(id = randomChannelId)
+        } else {
+            channels.forEach {
+                addressBook[it.id] = it
             }
         }
     }
@@ -150,7 +55,7 @@ class SFDS<A, B, C, D>(
             sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
             //start the new session of the job
             sessions[sessionId] =deepSpaceCarrier.launch {
-                channelFinder(channelId)?.channel?.emit(listOf(signal))
+                channelFinder(channelId)?.line?.emit(listOf(signal))
             }
         }
 
@@ -160,7 +65,7 @@ class SFDS<A, B, C, D>(
                 sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
                 //start the new session of the job
                 sessions[sessionId] =deepSpaceCarrier.launch {
-                    channelFinder(channelId)?.channel?.emit(signals)
+                    channelFinder(channelId)?.line?.emit(signals)
                 }
             } else {
                 Log.w("SFDS", "List of signals to send is empty")
@@ -175,15 +80,15 @@ class SFDS<A, B, C, D>(
 
         fun receiveOne(sessionId: String = "",channelId: String = "", signalIndex: Int = 0, analyzeSignal: (Signal<A, B, C, D>) -> Unit) {
             //get the transmission Line
-            val channel: Channel<A, B, C, D>? = channelFinder(channelId)
+            val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
-            channel?.let { activeLine ->
+            transmissionChannel?.let { activeLine ->
                 //clear the job if exist
                 sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
                 //start the new session of the job
                 sessions[sessionId] =deepSpaceCarrier.launch {
-                    activeLine.channel.collect { signals ->
+                    activeLine.line.collect { signals ->
                         signalAnalyzer(signals, signalIndex, analyzeSignal)
                     }
                 }
@@ -192,15 +97,15 @@ class SFDS<A, B, C, D>(
 
         fun receiveAll(sessionId: String = "",channelId: String = "", analyzeSignals: (List<Signal<A, B, C, D>>) -> Unit) {
             //get the transmission Line
-            val channel: Channel<A, B, C, D>? = channelFinder(channelId)
+            val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
-            channel?.let { activeLine ->
+            transmissionChannel?.let { activeLine ->
                 //clear the job if exist
                 sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
                 //start the new session of the job
                 sessions[sessionId] =deepSpaceCarrier.launch {
-                    activeLine.channel.collect { signals ->
+                    activeLine.line.collect { signals ->
                         analyzeSignals(signals)
                     }
                 }
@@ -215,15 +120,15 @@ class SFDS<A, B, C, D>(
         ) {
 
             //get the transmission Line
-            val channel: Channel<A, B, C, D>? = channelFinder(channelId)
+            val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
-            channel?.let { activeLine ->
+            transmissionChannel?.let { activeLine ->
                 //clear the job if exist
                 sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
                 //start the new session of the job
                 sessions[sessionId] =deepSpaceCarrier.launch {
-                    activeLine.channel.collectLatest { signals ->
+                    activeLine.line.collectLatest { signals ->
                         signalAnalyzer(signals, signalIndex, analyzeSignal)
                     }
                 }
@@ -234,15 +139,15 @@ class SFDS<A, B, C, D>(
             sessionId: String = "",channelId: String = "", analyzeSignals: (List<Signal<A, B, C, D>>) -> Unit) {
 
             //get the transmission Line
-            val channel: Channel<A, B, C, D>? = channelFinder(channelId)
+            val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
-            channel?.let { activeLine ->
+            transmissionChannel?.let { activeLine ->
                 //clear the job if exist
                 sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
                 //start the new session of the job
                 sessions[sessionId] =deepSpaceCarrier.launch {
-                    activeLine.channel.collectLatest { signals ->
+                    activeLine.line.collectLatest { signals ->
                         analyzeSignals(signals)
                     }
                 }
@@ -267,9 +172,9 @@ class SFDS<A, B, C, D>(
         }
     }
 
-    private fun channelFinder(channelId: String): Channel<A, B, C, D>? {
+    private fun channelFinder(channelId: String): TransmissionChannel<A, B, C, D>? {
         //get the line
-        val channel: Channel<A, B, C, D>? = if (channelId.isNotBlank()) {
+        val channel: TransmissionChannel<A, B, C, D>? = if (channelId.isNotBlank()) {
             addressBook[channelId]
         } else {
             addressBook.entries.firstOrNull()?.value
@@ -281,56 +186,6 @@ class SFDS<A, B, C, D>(
 
         return channel
     }
-
-
-    fun SFDS<A, B, C, D>.sharedBroadcast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.BROADCAST
-        transmissionBehavior = TransmissionBehavior.SHARED
-    }
-
-    fun SFDS<A, B, C, D>.sharedMulticast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.MULTICAST
-        transmissionBehavior = TransmissionBehavior.SHARED
-    }
-
-    fun SFDS<A, B, C, D>.sharedUnicast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.UNICAST
-        transmissionBehavior = TransmissionBehavior.SHARED
-    }
-
-    fun SFDS<A, B, C, D>.fullduplexBroadcast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.BROADCAST
-        transmissionBehavior = TransmissionBehavior.FULL_DUPLEX
-    }
-
-    fun SFDS<A, B, C, D>.fullduplexMulticast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.MULTICAST
-        transmissionBehavior = TransmissionBehavior.FULL_DUPLEX
-    }
-
-    fun SFDS<A, B, C, D>.fullduplexUnicast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.UNICAST
-        transmissionBehavior = TransmissionBehavior.FULL_DUPLEX
-    }
-
-    fun SFDS<A, B, C, D>.clientserverBroadcast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.BROADCAST
-        transmissionBehavior = TransmissionBehavior.CLIENT_SERVER
-    }
-
-    fun SFDS<A, B, C, D>.clientserverMulticast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.MULTICAST
-        transmissionBehavior = TransmissionBehavior.CLIENT_SERVER
-    }
-
-    fun SFDS<A, B, C, D>.clientserverUnicast(): SFDS<A, B, C, D> = this@SFDS.apply {
-        connectionType = ConnectionType.UNICAST
-        transmissionBehavior = TransmissionBehavior.CLIENT_SERVER
-    }
-
-    private fun <A, B, C, D> newSharedChannel() = Channel<A, B, C, D>(
-        id = UUID.randomUUID().toString(),
-    )
 
     private fun printDuplicateSession(sessionId: String){
         Log.i("SFDS","A pre-existent session of id : $sessionId has been deleted to create this new one.")
