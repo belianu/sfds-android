@@ -103,6 +103,8 @@ class SFDS<A, B, C, D>(
                     TransmissionBehavior.SHARED -> {
                         //no owners
                         sharedTransmission = true
+
+
                     }
 
                     TransmissionBehavior.FULL_DUPLEX -> {
