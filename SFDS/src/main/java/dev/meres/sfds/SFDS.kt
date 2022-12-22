@@ -2,6 +2,7 @@ package dev.meres.sfds
 
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -47,15 +48,23 @@ class SFDS<A, B, C, D>(
 
     inner class Generator {
 
-        fun sendOne(channelId: String = "", signal: Signal<A, B, C, D>) {
-            deepSpaceCarrier.launch {
+        val sessions: HashMap<String, Job> = hashMapOf()
+
+        fun sendOne(sessionId: String = "",channelId: String = "", signal: Signal<A, B, C, D>) {
+            //clear the job if exist
+            sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
+            //start the new session of the job
+            sessions[sessionId] =deepSpaceCarrier.launch {
                 channelFinder(channelId)?.line?.emit(listOf(signal))
             }
         }
 
-        fun sendSome(channelId: String = "", signals: List<Signal<A, B, C, D>>) {
+        fun sendSome(sessionId: String = "",channelId: String = "", signals: List<Signal<A, B, C, D>>) {
             if (signals.isNotEmpty()) {
-                deepSpaceCarrier.launch {
+                //clear the job if exist
+                sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
+                //start the new session of the job
+                sessions[sessionId] =deepSpaceCarrier.launch {
                     channelFinder(channelId)?.line?.emit(signals)
                 }
             } else {
@@ -67,13 +76,18 @@ class SFDS<A, B, C, D>(
 
     inner class Receiver {
 
-        fun receiveOne(channelId: String = "", signalIndex: Int = 0, analyzeSignal: (Signal<A, B, C, D>) -> Unit) {
+        val sessions: HashMap<String, Job> = hashMapOf()
+
+        fun receiveOne(sessionId: String = "",channelId: String = "", signalIndex: Int = 0, analyzeSignal: (Signal<A, B, C, D>) -> Unit) {
             //get the transmission Line
             val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
             transmissionChannel?.let { activeLine ->
-                deepSpaceCarrier.launch {
+                //clear the job if exist
+                sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
+                //start the new session of the job
+                sessions[sessionId] =deepSpaceCarrier.launch {
                     activeLine.line.collect { signals ->
                         signalAnalyzer(signals, signalIndex, analyzeSignal)
                     }
@@ -81,13 +95,16 @@ class SFDS<A, B, C, D>(
             }
         }
 
-        fun receiveAll(channelId: String = "", analyzeSignals: (List<Signal<A, B, C, D>>) -> Unit) {
+        fun receiveAll(sessionId: String = "",channelId: String = "", analyzeSignals: (List<Signal<A, B, C, D>>) -> Unit) {
             //get the transmission Line
             val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
             transmissionChannel?.let { activeLine ->
-                deepSpaceCarrier.launch {
+                //clear the job if exist
+                sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
+                //start the new session of the job
+                sessions[sessionId] =deepSpaceCarrier.launch {
                     activeLine.line.collect { signals ->
                         analyzeSignals(signals)
                     }
@@ -96,6 +113,7 @@ class SFDS<A, B, C, D>(
         }
 
         fun receiveLatestOne(
+            sessionId: String = "",
             channelId: String = "",
             signalIndex: Int = 0,
             analyzeSignal: (Signal<A, B, C, D>) -> Unit
@@ -106,7 +124,10 @@ class SFDS<A, B, C, D>(
 
             //check the transmission Line
             transmissionChannel?.let { activeLine ->
-                deepSpaceCarrier.launch {
+                //clear the job if exist
+                sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
+                //start the new session of the job
+                sessions[sessionId] =deepSpaceCarrier.launch {
                     activeLine.line.collectLatest { signals ->
                         signalAnalyzer(signals, signalIndex, analyzeSignal)
                     }
@@ -114,14 +135,18 @@ class SFDS<A, B, C, D>(
             }
         }
 
-        fun receiveLatestAll(channelId: String = "", analyzeSignals: (List<Signal<A, B, C, D>>) -> Unit) {
+        fun receiveLatestAll(
+            sessionId: String = "",channelId: String = "", analyzeSignals: (List<Signal<A, B, C, D>>) -> Unit) {
 
             //get the transmission Line
             val transmissionChannel: TransmissionChannel<A, B, C, D>? = channelFinder(channelId)
 
             //check the transmission Line
             transmissionChannel?.let { activeLine ->
-                deepSpaceCarrier.launch {
+                //clear the job if exist
+                sessions[sessionId]?.cancel().also { printDuplicateSession(sessionId) }
+                //start the new session of the job
+                sessions[sessionId] =deepSpaceCarrier.launch {
                     activeLine.line.collectLatest { signals ->
                         analyzeSignals(signals)
                     }
@@ -160,5 +185,9 @@ class SFDS<A, B, C, D>(
         }
 
         return channel
+    }
+
+    private fun printDuplicateSession(sessionId: String){
+        Log.i("SFDS","A pre-existent session of id : $sessionId has been deleted to create this new one.")
     }
 }
